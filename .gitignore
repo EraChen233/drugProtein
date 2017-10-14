@@ -1,5 +1,7 @@
 *.csv
 **/logs/*
+*.log
+*.pkl
 *.pyc
 *.py~
 pydpi/code/dataset/*
