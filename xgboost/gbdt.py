@@ -1,23 +1,40 @@
 # coding:utf-8
 import pandas as pd
 import xgboost as xgb
+import numpy as np
 from sklearn.cross_validation import train_test_split
 # import sys,random
 import csv
 import os
+import re
+import time
+import pdb
+from sklearn.cross_validation import StratifiedKFold
+from sklearn.cross_validation import cross_val_score
+from sklearn.metrics import roc_auc_score
+from sklearn.ensemble import GradientBoostingClassifier
+from sklearn.feature_selection import SelectFromModel, VarianceThreshold
+from sklearn.cross_validation import KFold
+from sklearn.linear_model import LogisticRegression
+from sklearn.preprocessing import normalize
+from sklearn.decomposition import PCA
+from subprocess import check_output
 from code import log
+from sklearn.preprocessing import OneHotEncoder
 
 logger = log.get_logger(__name__, 'train1.log')
-filename = 'drug_protein*2*encode_id'
-boost_round = 10000  # [10,100,1000,10000]
-# dropCols = ['label', 'proteinId', 'drugId']
-dropCols = ['label']
+filename = 'drug_protein'
+boost_round = 100  # [10,100,1000,10000]
+dropCols = ['label', 'proteinId', 'drugId']
+# dropCols = ['label']
 
 
 if not os.path.exists("./predict/%s" % filename):
     os.mkdir("./predict/%s" % filename)
 if not os.path.exists("./featurescore/%s" % filename):
     os.mkdir("./featurescore/%s" % filename)
+if not os.path.exists("./model/%s" % filename):
+    os.mkdir("./model/%s" % filename)
 
 train = pd.read_csv('./data/{0}.csv'.format(filename))
 train0, test = train_test_split(train, test_size=0.2, random_state=1)
@@ -74,8 +91,48 @@ def pipeline(iteration, boost_round, gamma, max_depth, lambd, subsample, colsamp
     # watchlist  = [(dtrain,'train')]#The early stopping is based on last set in the evallist
     model = xgb.train(
         params, dtrain, num_boost_round=boost_round, evals=watchlist)
-    # model.save_model('./model/xgb{0}.model'.format(iteration))
+    model.save_model('./model/{0}/xgb{1}.model'.format(filename, iteration))
+    # model.dump_model(
+    #     './model/{0}/xgb_featrue{1}.txt'.format(filename, iteration))
+
+    # --------------------------- 用xgboot的predict(dtrain, pred_leaf=True)生成新的特征 ------------------------
+    train_new_feature = model.predict(dtrain, pred_leaf=True)
+    test_new_feature = model.predict(dtest, pred_leaf=True)
+    train_new_feature1 = pd.DataFrame(train_new_feature)
+    test_new_feature1 = pd.DataFrame(test_new_feature)
+
+    pdb.set_trace()
+
+    logger.info("原始train: %d  %d，原始test %d  %d",
+                train1.shape[0], train1.shape[1], test.shape[0], test.shape[1])
+    logger.info("训练train: %d  %d，训练test %d  %d",
+                train_new_feature1.shape[0], train_new_feature1.shape[1], test_new_feature1.shape[0], test_new_feature1.shape[1])
+    lr = LogisticRegression(n_jobs=-1, C=0.1, penalty='l1')
+    lr.fit(train_new_feature1, y)
+    # joblib.dump(lr, 'gbdt_lr_test/model/lr_orgin.m')
+    # 预测及AUC评测
+    y_pred_test = lr.predict_proba(test_new_feature1)[:, 1]
+    # lr_test_auc = roc_auc_score(y_test_origin, y_pred_test)
+    # print('基于原有特征的LR AUC: %.5f' % lr_test_auc)
+    pd.DataFrame({"proteinId": test['proteinId'].values, "drugId": test['drugId'].values, "label": test['label'].values,  "predict": y_pred_test}).to_csv(
+        'gbdt_proto_feature_lr.csv', index=False)
+
+    # ---------------------------------------------------------------------------------------------------------
+
     print "best best_ntree_limit", model.best_ntree_limit  # did not save the best,why?
+
+    # ---------------------------------- gbdt+lr test1 --------------------------------------------------------
+    # 定义模型
+    # xgboost = xgb.XGBClassifier(nthread=4, learning_rate=0.08,
+    #                             n_estimators=50, max_depth=5, gamma=0, subsample=0.9, colsample_bytree=0.5)
+    # # 训练学习
+    # xgboost.fit(train1.drop(dropCols, axis=1), train1.label)
+    # X_train_leaves = xgboost.apply(train1.drop(dropCols, axis=1))  # 70 50
+    # pd.DataFrame(X_train_leaves).to_csv('X_train_leaves.csv', index=None)
+
+    # print "train1:", train1.shape
+    # print "X_train_leaves.shape:", X_train_leaves.shape
+    # ----------------------------------------------------------------------------------------------------------
 
     test_y = model.predict(dtest)
     test_result = pd.DataFrame()
@@ -110,6 +167,123 @@ def pipeline(iteration, boost_round, gamma, max_depth, lambd, subsample, colsamp
     a = float((test_result['Int'] == test_result['label']).sum(
         axis=0)) / float(test_result.shape[0])
     logger.info('准确率%f\n\n\n' % a)
+
+
+def oneHotEncoderBetweenTwoTwoTable(df1, df2):
+    for i in df1.columns:
+        arr = np.unique(list(df1[i]) + list(df2[i]))
+        ohe = OneHotEncoder()
+
+
+def lr(GBDT_FILE, train, test):
+    check_time = time.time()
+    print "GBDT_FILE", GBDT_FILE
+    f = open(GBDT_FILE, 'r')
+    feature_set = set()
+    origin_cols = train.columns[3:]
+    for line in f.readlines():
+        if '<' in line:  # feature line
+            line = line.split(':')[1].strip()
+            feature_re = re.match('\[(.*)?\]', line)
+            info = feature_re.group(0)  # should be only one group
+            info = re.sub('\[|\]', '', info)
+            feature_set.add(info)
+
+    # feature encoder
+
+    logger.info('GBDT feature set length: %d\n\n\n' % len(feature_set))
+
+    i = 1
+    for info in feature_set:
+        print i, " feature_set:", info
+        key = info.split("<")[0].strip()
+        value = float(info.split("<")[1].strip())
+        train[info] = train[key].apply(lambda x: 1 if x < value else 0)
+        test[info] = test[key].apply(lambda x: 1 if x < value else 0)
+        i += 1
+
+    print "begin drop columns"
+    # remove original feature
+    train = train.drop(origin_cols, axis=1)
+    test = test.drop(origin_cols, axis=1)
+    train.to_csv('train_after_gbdt.csv', index=None)
+    test.to_csv('test_after_gbdt.csv', index=None)
+    logger.info('feature generated base on gbdt sub-model, <<<<%s feature generated, time spend:<<<<%s' %
+                (test.shape[1] - 1, round(((time.time() - check_time) / 60), 2)))
+    check_time = time.time()
+
+    #--------------------------------------------------------UNDERSAMPLE-------------------------------------------------------------------
+    train1 = train[train['label'] == 1]  # positive train samples
+    train2 = train[train['label'] == 0]  # negative train samples
+    # train2 suppose to be the majority type, if not change it
+    if train2.shape[0] < train1.shape[0]:
+        train1 = train[train['label'] == 0]  # positive train samples
+        train2 = train[train['label'] == 1]  # negative train samples
+    train1 = train1.reset_index(drop=True)
+    train2 = train2.reset_index(drop=True)
+    fold = train2.shape[0] / train1.shape[0]
+    # folds = int(fold / 4.)
+    folds = 5
+    skf1 = StratifiedKFold(train1.label.values,
+                           n_folds=folds,
+                           shuffle=False,
+                           random_state=1580)
+    skf2 = StratifiedKFold(train2.label.values,
+                           n_folds=folds,
+                           shuffle=False,
+                           random_state=1580)
+    #------------------------------------------------------LVL1 Logistic Regression--------------------------------------------------------
+    clf = LogisticRegression(penalty='l1', C=0.25,
+                             random_state=1580, n_jobs=-1)
+    features = list(train.columns)
+    for tmp in dropCols:
+        features.remove(tmp)
+
+    df_train_pred = []
+    df_pred = []
+    result = []
+    # pdb.set_trace()
+    for i, (a, neg_index) in enumerate(skf2):
+        print "LVL1----i:", i, "  a:", a, "  neg_index:", neg_index
+        fold_tag = "fold_%s" % i
+        pos_index = list(skf1)[i][0]
+        train_pos = train1.loc[pos_index, :]
+        trainner = pd.concat(
+            (train_pos, train2.loc[neg_index, :]), axis=0, ignore_index=True)
+        y = trainner.label.values
+        X = trainner[features]
+        clf.fit(X, y)
+        train_pred = clf.predict_proba(train[features])[:, 1]
+        y_pred = clf.predict_proba(test[features])[:, 1]
+        df_train_pred.append(train_pred)
+        df_pred.append(y_pred)
+        result.append(clf.coef_[0])
+    # average results
+    train_preds = np.average(np.array(df_train_pred), axis=0)
+    test_preds = np.average(np.array(df_pred), axis=0)
+
+    # output feature weights
+    coef = np.average(np.array(result), axis=0)
+    IMPORTANCE = 3
+    result = sorted(
+        zip(map(lambda x: round(x, IMPORTANCE), coef), features), reverse=True)
+    o = open('Logistic_coef.txt', "w")
+    o.write("len of feature: %s\n" % len(result))
+    for (value, key) in result:
+        if 0 == value:
+            pass
+        else:
+            writeln = "%s: %.3f\n" % (key, value)
+            o.write(writeln)
+    o.close()
+
+    logger.info('LVL1 Logistic Model trained, Average AUC: <<<<%s, time spend:<<<<%s' % (
+        roc_auc_score(train.label.values, train_preds), round(((time.time() - check_time) / 60), 2)))
+    check_time = time.time()
+    #-----------------------------------------------------OUTPUT----------------------------------------------------------------------------
+    pd.DataFrame({"proteinId": test['proteinId'].values, "drugId": test['drugId'].values, "label": test['label'].values,  "predict": test_preds}).to_csv(
+        'gbdt_lr_baseline.csv', index=False)
+    logger.info("end time: %s\n\n\n" % time.ctime())
 
 
 if __name__ == "__main__":
@@ -174,3 +348,4 @@ if __name__ == "__main__":
 
     pipeline(0, boost_round, gamma, max_depth, lambd, subsample,
              colsample_bytree, min_child_weight, eta, seed)
+    # lr('./model/{0}/xgb_featrue{1}.txt'.format(filename, 0), train0, test)
