@@ -10,8 +10,11 @@ drugProtein
 │   └── ...
 ├── xgboost              "使用xgboost进行药物靶标预测"
 │   ├── code             "进行特征工程等数据出来工作"
-│   └── gbdt.py          "使用gbdt进行预测"
-│   └── rf.py            "使用random forest进行预测"
+│   │    ├── gbdt.py     "用xgboost进行训练"
+│   │    ├── gbdt_lr.py  "用xgboost进行训练，然后用xgboost生成的树作为lr模型的特征输入"
+│   │    └── ...
+│   ├── run.py           "xgboost训练入口，调用code文件夹的gbdt或者gbdt_lr进行训练"
+│   └── ...
 └── readme.md
 ```
 
