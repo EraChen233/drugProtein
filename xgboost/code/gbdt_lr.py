@@ -25,9 +25,10 @@ def pipeline(iteration, boost_round, gamma, max_depth, lambd, subsample, colsamp
 
     dropCols = ['label'] if keepId else ['label', 'proteinId', 'drugId']
     train1, val = train_test_split(train0, test_size=0.1, random_state=1)
-    y = train1.label
+    trainY = train1.label
+    train1 = train1.drop(dropCols, axis=1)
 
-    dtrain = xgb.DMatrix(train1.drop(dropCols, axis=1), label=train1.label)
+    dtrain = xgb.DMatrix(train1, label=trainY)
     dtest = xgb.DMatrix(test.drop(dropCols, axis=1))  # use local test data
     dval = xgb.DMatrix(val.drop(dropCols, axis=1), label=val.label)
     recordFileName = "{0}_{1}_{2}_{3}".format(
@@ -38,7 +39,7 @@ def pipeline(iteration, boost_round, gamma, max_depth, lambd, subsample, colsamp
         # 默认reg:linear，这个参数定义需要被最小化的损失函数。binary:logistic 二分类的逻辑回归，返回预测的概率(不是类别)
         'objective': 'binary:logistic',
         # 默认1 在各类别样本十分不平衡时，把这个参数设定为一个正值，可以使算法更快收敛。
-        'scale_pos_weight': float(len(y) - sum(y)) / float(sum(y)),
+        'scale_pos_weight': float(len(trainY) - sum(trainY)) / float(sum(trainY)),
         'eval_metric': 'auc',
         'gamma': gamma,                     # 默认0。用于控制是否后剪枝的参数,越大越保守，一般0.1、0.2这样子。
         'max_depth': max_depth,             # 默认6，典型值3-10，构建树的深度，越大越容易过拟合
@@ -65,58 +66,11 @@ def pipeline(iteration, boost_round, gamma, max_depth, lambd, subsample, colsamp
     # model.dump_model(
     #     './model/{0}.txt'.format(recordFileName))
 
-    # --------------------------- 用xgboot的predict(dtrain, pred_leaf=True)生成新的特征 ------------------------
-    train_new_feature = model.predict(dtrain, pred_leaf=True)
-    test_new_feature = model.predict(dtest, pred_leaf=True)
-    train_new_feature1 = pd.DataFrame(train_new_feature)
-    test_new_feature1 = pd.DataFrame(test_new_feature)
-
-    pdb.set_trace()
-
-    logger.info("原始train: %d  %d，原始test %d  %d",
-                train1.shape[0], train1.shape[1], test.shape[0], test.shape[1])
-    logger.info("训练train: %d  %d，训练test %d  %d",
-                train_new_feature1.shape[0], train_new_feature1.shape[1], test_new_feature1.shape[0], test_new_feature1.shape[1])
-    lr = LogisticRegression(n_jobs=-1, C=0.1, penalty='l1')
-    lr.fit(train_new_feature1, y)
-    # joblib.dump(lr, 'gbdt_lr_test/model/lr_orgin.m')
-    # 预测及AUC评测
-    y_pred_test = lr.predict_proba(test_new_feature1)[:, 1]
-    # lr_test_auc = roc_auc_score(y_test_origin, y_pred_test)
-    # print('基于原有特征的LR AUC: %.5f' % lr_test_auc)
-    pd.DataFrame({"proteinId": test['proteinId'].values, "drugId": test['drugId'].values, "label": test['label'].values,  "predict": y_pred_test}).to_csv(
-        'gbdt_proto_feature_lr.csv', index=False)
-
-    # ---------------------------------------------------------------------------------------------------------
-
-    print "best best_ntree_limit", model.best_ntree_limit  # did not save the best,why?
-
-    # ---------------------------------- gbdt+lr test1 --------------------------------------------------------
-    # 定义模型
-    # xgboost = xgb.XGBClassifier(nthread=4, learning_rate=0.08,
-    #                             n_estimators=50, max_depth=5, gamma=0, subsample=0.9, colsample_bytree=0.5)
-    # # 训练学习
-    # xgboost.fit(train1.drop(dropCols, axis=1), train1.label)
-    # X_train_leaves = xgboost.apply(train1.drop(dropCols, axis=1))  # 70 50
-    # pd.DataFrame(X_train_leaves).to_csv('X_train_leaves.csv', index=None)
-
-    # print "train1:", train1.shape
-    # print "X_train_leaves.shape:", X_train_leaves.shape
-    # ----------------------------------------------------------------------------------------------------------
-
     print "best best_ntree_limit", model.best_ntree_limit  # did not save the best,why?
 
     test_y = model.predict(dtest)
-    test_result = test[['proteinId', 'drugId', 'label']]
-    test_result['score'] = test_y
-
-    test_result['Int'] = test_result.score
-    test_result.Int[test_result.Int < 0.5] = 0
-    test_result.Int[test_result.Int >= 0.5] = 1
-
-    # remember to edit xgb.csv , add ""
-    test_result.to_csv(
-        "./predict/{0}.csv".format(recordFileName))
+    arrangeResult(test, test_y, logger,
+                  "./predict/{0}.csv".format(recordFileName))
 
     # save feature score
     feature_score = model.get_fscore()
@@ -129,9 +83,72 @@ def pipeline(iteration, boost_round, gamma, max_depth, lambd, subsample, colsamp
     with open('./featurescore/{0}.csv'.format(recordFileName), 'w') as f:
         f.writelines("feature,score\n")
         f.writelines(fs)
-    a = float((test_result['Int'] == test_result['label']).sum(
-        axis=0)) / float(test_result.shape[0])
-    logger.info('准确率%f\n\n\n' % a)
+
+    # --------------------------- 用xgboot的predict(dtrain, pred_leaf=True)生成新的特征 ------------------------
+    train_new_feature = model.predict(dtrain, pred_leaf=True)
+    test_new_feature = model.predict(dtest, pred_leaf=True)
+    train_new_feature1 = pd.DataFrame(train_new_feature)
+    test_new_feature1 = pd.DataFrame(test_new_feature)
+
+    # ********************* 增加原始特征训练 ************************
+    train_new_feature1 = pd.concat(
+        [train1.reset_index(drop=True), train_new_feature1], axis=1).fillna(-1).replace(np.inf, -2)
+    test_new_feature1 = pd.concat(
+        [test.drop(dropCols, axis=1).reset_index(drop=True), test_new_feature1], axis=1).fillna(-1).replace(np.inf, -2)
+
+    # ************************************************************
+    train_new_feature1.to_csv(
+        './gbdt_lr_test/train_data/gbdt_lr_%s.csv' % recordFileName, index=False)
+    test_new_feature1.to_csv(
+        './gbdt_lr_test/test_data/gbdt_lr_%s.csv' % recordFileName, index=False)
+
+    logger.info("原始train: %d  %d，原始test %d  %d",
+                train1.shape[0], train1.shape[1], test.shape[0], test.shape[1])
+    logger.info("训练train: %d  %d，训练test %d  %d",
+                train_new_feature1.shape[0], train_new_feature1.shape[1], test_new_feature1.shape[0], test_new_feature1.shape[1])
+
+    # pdb.set_trace()
+
+    lr = LogisticRegression(n_jobs=-1, C=0.1, penalty='l1')
+    lr.fit(train_new_feature1, trainY)
+    # joblib.dump(lr, 'gbdt_lr_test/model/lr_orgin.m')
+    # 预测及AUC评测
+
+    y_pred_test = lr.predict_proba(test_new_feature1)[:, 1]
+    arrangeResult(test, y_pred_test, logger,
+                  './gbdt_lr_test/predict/gbdt_lr_%s.csv' % recordFileName)
+
+    # ---------------------------------------------------------------------------------------------------------
+
+    # ---------------------------------- gbdt+lr test1 --------------------------------------------------------
+    # 定义模型
+    # xgboost = xgb.XGBClassifier(nthread=4, learning_rate=0.08,
+    #                             n_estimators=50, max_depth=5, gamma=0, subsample=0.9, colsample_bytree=0.5)
+    # # 训练学习
+    # xgboost.fit(train1, trainY)
+    # X_train_leaves = xgboost.apply(train1)  # 70 50
+    # pd.DataFrame(X_train_leaves).to_csv('X_train_leaves.csv', index=None)
+
+    # print "train1:", train1.shape
+    # print "X_train_leaves.shape:", X_train_leaves.shape
+    # ----------------------------------------------------------------------------------------------------------
+
+
+def arrangeResult(originalDF, y, logger, filename):
+    result = originalDF[['proteinId', 'drugId', 'label']]
+    result['score'] = y
+
+    result['Int'] = result.score
+    result.Int[result.Int < 0.5] = 0
+    result.Int[result.Int >= 0.5] = 1
+    result.to_csv(filename, index=None)
+
+    a = float((result['Int'] == result['label']).sum(
+        axis=0)) / float(result.shape[0])
+    logger.info('准确率%f' % a)
+
+    aucVal = roc_auc_score(originalDF.label, y)
+    logger.info('AUC: %.5f\n' % aucVal)
 
 
 def start(filename, boost_round, keepId, logFile):

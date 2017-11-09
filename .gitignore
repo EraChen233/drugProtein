@@ -5,3 +5,4 @@
 *.pyc
 *.py~
 pydpi/code/dataset/*
+*.model
