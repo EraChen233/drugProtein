@@ -3,6 +3,7 @@ import pandas as pd
 import xgboost as xgb
 import numpy as np
 from sklearn.cross_validation import train_test_split
+from sklearn.metrics import roc_auc_score
 import csv
 import os
 import time
@@ -82,6 +83,9 @@ def pipeline(iteration, boost_round, gamma, max_depth, lambd, subsample, colsamp
     a = float((test_result['Int'] == test_result['label']).sum(
         axis=0)) / float(test_result.shape[0])
     logger.info('准确率%f\n\n\n' % a)
+
+    aucVal = roc_auc_score(test.label, y)
+    self.logger.info('AUC: %.5f\n' % aucVal)
 
 
 def start(filename, boost_round, keepId, logFile):

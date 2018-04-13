@@ -27,9 +27,9 @@ def featurEnginering(file, arg1="", bucket=True, filePath=''):
     if file.find('drug_protein') >= 0:
         table['drug_MolProperty_TPSA'] = table['drug_MolProperty_TPSA'].apply(
             s)
-
     # 数据填充，把None替换为-1
-    table = table.fillna(-1)
+    # table = table.fillna(-1)
+    nanReplace(table)
 
     if bucket:
         for h in colTypes['discrete']:
@@ -82,7 +82,7 @@ def featurEnginering(file, arg1="", bucket=True, filePath=''):
 
 
 def transferIdToNumber(file):
-    table = pd.read_csv('../data/{0}/{0}.csv'.format(file))
+    table = pd.read_csv('../data/{0}.csv'.format(file))
     table['proteinId'] = table['proteinId'].rank(method='dense')
     table['drugId'] = table['drugId'].rank(method='dense')
     table.to_csv('../data/{0}*encode_id.csv'.format(file), index=None)
@@ -91,8 +91,19 @@ def transferIdToNumber(file):
                      filePath='drug_protein')
 
 
+def nanReplace(df):
+    df.replace(np.inf, np.nan, inplace=True)  # 先把inf替换了
+    empty = df.isnull().any()
+    empty = empty[empty == True]
+    mean = df.mean()
+    for col in empty.index:
+        m = mean[col] if col in mean else 0
+        print 'nanReplace',m,'           ', col
+        df[col].replace(np.nan, m, inplace=True)
+
+
 # featurEnginering("dpi2","2")
 # featurEnginering("dpi1", "onlyOneValue")
-# transferIdToNumber('drug_protein*2')
-featurEnginering('drug_protein*2*encode_id', bucket=False,
-                 filePath='drug_protein')
+transferIdToNumber('drug_protein*15_800_feature_score_links')
+# featurEnginering('drug_protein*2*encode_id', bucket=False,
+#                  filePath='drug_protein')

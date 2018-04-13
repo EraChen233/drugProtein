@@ -1,9 +1,9 @@
-# -*- coding: UTF-8 -*-  
+# -*- coding: UTF-8 -*-
 import fun
 
 # fun.splitData()
 # fun.getPositiveSample()
-# fun.getNegetiveData(15000) #随机生成一万五千个负样本
+# fun.getNegetiveData(37000)  # 随机生成五倍负样本
 # fun.dp1split()   # 拆分dp1的数据
 
 # dpi1 数据拆分
@@ -22,7 +22,7 @@ import fun
 # fun.proteinsplit('PAAC',2)
 
 
-#drug 数据拆分
+# drug 数据拆分
 # head = ['Constitution', 'Topology', 'Connectivity', 'Estate', 'Kappa', 'MOE', 'Geary', 'Moran', 'MoreauBroto', 'Charge', 'MolProperty', 'AllDescriptor'] # 不需要AllDescriptor
 # head = ['Constitution', 'Topology', 'Connectivity', 'Estate', 'Kappa', 'MOE', 'Geary', 'Moran', 'MoreauBroto', 'Charge', 'MolProperty']
 # for i in range(0,len(head)):
@@ -34,7 +34,7 @@ import fun
 #         fun.drugsplit(head[i])
 
 # protein drug 数据合并
-# fun.joinProteinOrDrug('negetive*2')
+fun.joinProteinOrDrug('negetive*3')
 
 # 拆分dpi 2 的protein_drug
 # fun.splitdpi2()
@@ -42,5 +42,5 @@ import fun
 # 检查数据缺失值
 # fun.drawEmpty('drug_protein*2')
 
-#检查数据连续还是离散
-fun.continuousOrDiscrete('drug_protein*2_1')
+# 检查数据连续还是离散
+# fun.continuousOrDiscrete('drug_protein*2_1')
